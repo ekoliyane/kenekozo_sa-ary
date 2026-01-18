@@ -76,6 +76,18 @@
 
                 <textarea id="input-text" class="w-full h-40 p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono mb-4" placeholder="Contoh:&#10;📦 PENGIRIMAN&#10;1. Bu Ani (Freezer 4 Rak)...&#10;2. Pak Budi (Tagih Invoice)..."></textarea>
                 
+                <!-- FITUR BARU: Adjustment Manual -->
+                <div class="bg-gray-50 p-3 rounded-xl border border-gray-200 mb-4">
+                    <label class="text-xs font-bold text-gray-600 flex items-center gap-1 mb-2">
+                        <i data-lucide="edit-3" class="w-3 h-3"></i> Tambahan / Potongan Lain (Opsional)
+                    </label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <input type="text" id="adj-desc" class="col-span-2 p-2 text-xs border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Ket. (Misal: Bonus Lembur, Uang Bensin)">
+                        <input type="number" id="adj-amount" class="p-2 text-xs border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Nominal (Rp)">
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1 italic">*Gunakan tanda minus (-) untuk potongan. Contoh: -50000</p>
+                </div>
+
                 <button onclick="processData()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all">
                     <i data-lucide="wand-2" class="w-5 h-5"></i> HITUNG & BUAT STRUK
                 </button>
@@ -136,10 +148,17 @@
                             <span>Ongkos Jasa/Otot (<span id="txt-unit">0</span> titik):</span>
                             <span id="val-load">Rp 0</span>
                         </div>
-                        <div class="flex justify-between text-xs text-gray-600 mb-3">
+                        <div class="flex justify-between text-xs text-gray-600 mb-1">
                             <span>Uang Makan:</span>
                             <span id="val-meal">Rp 20.000</span>
                         </div>
+                        
+                        <!-- Baris Adjustment (Hidden by default) -->
+                        <div id="row-adj" class="flex justify-between text-xs font-bold mb-3 hidden text-indigo-600">
+                            <span id="val-adj-desc">Lain-lain:</span>
+                            <span id="val-adj">Rp 0</span>
+                        </div>
+
                         <div class="border-t border-gray-300 pt-2 flex justify-between items-center">
                             <span class="font-bold text-gray-800 text-sm">TOTAL DITERIMA</span>
                             <span class="font-black text-xl text-indigo-700" id="val-total">Rp 0</span>
@@ -190,6 +209,10 @@
         async function processData() {
             const text = document.getElementById('input-text').value;
             if(!text.trim()) return alert("Isi data dulu!");
+
+            // Ambil Data Adjustment
+            const adjDesc = document.getElementById('adj-desc').value.trim() || "Lain-lain";
+            const adjAmount = parseInt(document.getElementById('adj-amount').value) || 0;
 
             showLoading(true);
 
@@ -292,7 +315,7 @@
                 const geojson = data.routes[0].geometry;
 
                 // 4. Render Receipt
-                renderReceipt(sorted, distKM, geojson);
+                renderReceipt(sorted, distKM, geojson, adjDesc, adjAmount);
                 
             } catch (e) {
                 alert("Gagal menghitung rute. Cek koneksi internet.");
@@ -302,7 +325,7 @@
             showLoading(false);
         }
 
-        function renderReceipt(stops, dist, geojson) {
+        function renderReceipt(stops, dist, geojson, adjDesc, adjAmount) {
             const node = document.getElementById('receipt-node');
             node.classList.remove('hidden');
             
@@ -322,24 +345,34 @@
             setTimeout(() => {
                 map.invalidateSize(); // FIX: Reset ukuran peta agar tidak blank
                 
-                // Map Draw
-                if(routeLayer) map.removeLayer(routeLayer);
+                // Clear previous layers
+                map.eachLayer(layer => {
+                    if (layer instanceof L.Path || layer instanceof L.Marker || layer instanceof L.CircleMarker) {
+                        map.removeLayer(layer);
+                    }
+                });
+
+                // Map Draw Route
                 routeLayer = L.geoJSON(geojson, { style: { color: '#4f46e5', weight: 5 } }).addTo(map);
                 
                 // Markers
-                map.eachLayer(l => { if(l instanceof L.Marker || l instanceof L.CircleMarker) map.removeLayer(l); });
-                
-                const bounds = new L.LatLngBounds();
-                bounds.extend([WAREHOUSE.lat, WAREHOUSE.lng]);
                 L.circleMarker([WAREHOUSE.lat, WAREHOUSE.lng], {radius: 6, color:'black', fillColor:'white', fillOpacity:1}).addTo(map);
 
-                stops.forEach((s, i) => {
+                stops.forEach((s) => {
                     L.circleMarker([s.lat, s.lng], {radius: 6, color:'#4f46e5', fillColor:'#4f46e5', fillOpacity:1}).addTo(map);
-                    bounds.extend([s.lat, s.lng]);
                 });
                 
-                // FIX: Zoom agar pas ke rute
-                map.fitBounds(bounds, {padding:[20,20]});
+                // FIX: Zoom agar pas ke seluruh rute (Garis Biru), bukan cuma titik
+                const routeBounds = routeLayer.getBounds();
+                if (routeBounds.isValid()) {
+                    map.fitBounds(routeBounds, {padding:[40,40]});
+                } else {
+                    // Fallback manual bounds jika geojson aneh
+                    const bounds = new L.LatLngBounds();
+                    bounds.extend([WAREHOUSE.lat, WAREHOUSE.lng]);
+                    stops.forEach(s => bounds.extend([s.lat, s.lng]));
+                    map.fitBounds(bounds, {padding:[40,40]});
+                }
             }, 300); // Delay 300ms cukup aman
             // ==============================
 
@@ -390,13 +423,30 @@
             // Financials
             const payDrive = dist * PRICES.perKM;
             const payMeal = PRICES.meal;
-            const grandTotal = payDrive + totalLoad + payMeal;
+            let grandTotal = payDrive + totalLoad + payMeal;
 
             document.getElementById('txt-km').innerText = dist;
             document.getElementById('val-drive').innerText = `Rp ${payDrive.toLocaleString('id-ID')}`;
             
             document.getElementById('txt-unit').innerText = totalUnitCount;
             document.getElementById('val-load').innerText = `Rp ${totalLoad.toLocaleString('id-ID')}`;
+            
+            document.getElementById('val-meal').innerText = `Rp ${payMeal.toLocaleString('id-ID')}`;
+
+            // Handle Adjustment Display
+            if (adjAmount !== 0) {
+                grandTotal += adjAmount;
+                const adjRow = document.getElementById('row-adj');
+                adjRow.classList.remove('hidden');
+                adjRow.classList.add('flex');
+                document.getElementById('val-adj-desc').innerText = adjDesc + ":";
+                document.getElementById('val-adj').innerText = (adjAmount > 0 ? "+" : "") + `Rp ${adjAmount.toLocaleString('id-ID')}`;
+                
+                // Color logic for negative/positive
+                document.getElementById('val-adj').className = adjAmount < 0 ? 'text-red-600' : 'text-green-600';
+            } else {
+                document.getElementById('row-adj').classList.add('hidden');
+            }
             
             document.getElementById('val-total').innerText = `Rp ${grandTotal.toLocaleString('id-ID')}`;
 
