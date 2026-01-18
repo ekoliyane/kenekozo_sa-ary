@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kenekozo - Kalkulator Gaji Sopir</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS (Maps) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- HTML2Canvas (Untuk Screenshot Struk) -->
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        
+        /* Receipt Styling */
+        #receipt-node {
+            background: white;
+            width: 400px;
+            margin: 0 auto;
+            border-bottom: 2px dashed #ccc; 
+            position: relative;
+        }
+        #receipt-node::after {
+            content: "";
+            position: absolute;
+            left: 0;
+            bottom: -10px;
+            height: 10px;
+            width: 100%;
+            background: radial-gradient(circle, transparent, transparent 50%, #f3f4f6 50%, #f3f4f6 100%) -7px -8px / 16px 16px repeat-x;
+        }
+        
+        #map { height: 200px; width: 100%; z-index: 1; border: 1px solid #eee; }
+        
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Loading Overlay */
+        #loading {
+            position: fixed; inset: 0; background: rgba(255,255,255,0.9);
+            z-index: 1000; display: none; justify-content: center; align-items: center; flex-direction: column;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <!-- Loading -->
+    <div id="loading">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+        <p class="text-indigo-600 font-bold" id="loading-text">Memproses...</p>
+    </div>
+
+    <div class="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        <!-- KOLOM INPUT (KIRI) -->
+        <div class="space-y-6">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="bg-indigo-100 p-2 rounded-lg text-indigo-600">
+                        <i data-lucide="calculator" class="w-6 h-6"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-800">Input Misi</h1>
+                        <p class="text-xs text-gray-500">Paste data dari Rentminder/WA di sini</p>
+                    </div>
+                </div>
+
+                <textarea id="input-text" class="w-full h-40 p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono mb-4" placeholder="Contoh:&#10;📦 PENGIRIMAN&#10;1. Bu Ani (Freezer 4 Rak)..."></textarea>
+                
+                <button onclick="processData()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all">
+                    <i data-lucide="wand-2" class="w-5 h-5"></i> HITUNG & BUAT STRUK
+                </button>
+            </div>
+
+            <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 text-xs text-blue-800">
+                <h3 class="font-bold mb-2 flex items-center gap-2"><i data-lucide="info" class="w-4 h-4"></i> Info Tarif Otomatis:</h3>
+                <ul class="list-disc pl-4 space-y-1">
+                    <li><b>Jalan:</b> Rp 1.000 / km (via Rute Peta)</li>
+                    <li><b>Otot Ringan:</b> Rp 10.000 (4 Rak, 100-200L)</li>
+                    <li><b>Otot Sedang:</b> Rp 15.000 (6 Rak, 300-400L)</li>
+                    <li><b>Otot Berat:</b> Rp 25.000 (500L+)</li>
+                    <li><b>Uang Makan:</b> Rp 20.000 (Flat)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- KOLOM OUTPUT STRUK (KANAN) -->
+        <div class="flex flex-col items-center">
+            
+            <!-- AREA STRUK (YANG AKAN DI-SCREENSHOT) -->
+            <div id="receipt-node" class="shadow-2xl hidden">
+                <!-- Header -->
+                <div class="bg-gray-900 text-white p-6 text-center relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
+                    <h2 class="text-2xl font-black tracking-widest">KENEKOZO</h2>
+                    <p class="text-[10px] text-gray-400 tracking-widest uppercase mt-1">Logistics & Distribution</p>
+                    <div class="mt-4 border-t border-gray-700 pt-2 flex justify-between text-[10px] text-gray-400 font-mono">
+                        <span id="receipt-date">DD/MM/YYYY</span>
+                        <span id="receipt-id">#ID-0000</span>
+                    </div>
+                </div>
+
+                <!-- Map Snapshot -->
+                <div class="p-4 bg-white">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-2">Peta Rute Perjalanan</p>
+                    <div id="map" class="rounded-lg grayscale-[20%]"></div>
+                    <p class="text-[10px] text-center text-gray-500 mt-1 italic" id="receipt-dist-text">Total Jarak Tempuh: 0 KM</p>
+                </div>
+
+                <!-- Rincian -->
+                <div class="px-6 py-2">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase mb-2 border-b pb-1">Rincian Misi</p>
+                    <ul id="receipt-items" class="text-xs space-y-2 font-mono text-gray-700">
+                        <!-- Items injected here -->
+                    </ul>
+                </div>
+
+                <!-- Hitungan Duit -->
+                <div class="p-6">
+                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-100">
+                        <div class="flex justify-between text-xs text-gray-600 mb-1">
+                            <span>Uang Jalan (<span id="txt-km">0</span> km):</span>
+                            <span id="val-drive">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between text-xs text-gray-600 mb-1">
+                            <span>Ongkos Otot (<span id="txt-unit">0</span> unit):</span>
+                            <span id="val-load">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between text-xs text-gray-600 mb-3">
+                            <span>Uang Makan:</span>
+                            <span id="val-meal">Rp 20.000</span>
+                        </div>
+                        <div class="border-t border-gray-300 pt-2 flex justify-between items-center">
+                            <span class="font-bold text-gray-800 text-sm">TOTAL DITERIMA</span>
+                            <span class="font-black text-xl text-indigo-700" id="val-total">Rp 0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 text-center">
+                        <p class="text-[10px] text-gray-400">Pembayaran via Transfer</p>
+                        <p class="text-[10px] text-gray-300 mt-1">Terima kasih atas kerja kerasnya! 💪</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tombol Download -->
+            <button id="btn-download" onclick="downloadReceipt()" class="hidden mt-6 bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-full font-bold shadow-xl transition-transform hover:scale-105 flex items-center gap-2">
+                <i data-lucide="download" class="w-5 h-5"></i> Simpan Gambar Struk
+            </button>
+
+        </div>
+    </div>
+
+    <script>
+        // CONFIG
+        const PRICES = { perKM: 1000, meal: 20000 };
+        const WAREHOUSE = { lat: -7.640133, lng: 110.254388 }; // Ngluwar
+        
+        let map;
+        let routeLayer;
+
+        // INIT
+        window.onload = () => {
+            lucide.createIcons();
+            // JANGAN init map di sini karena container masih hidden
+        };
+
+        // PARSING
+        function calculateUnitFee(name) {
+            const s = name.toLowerCase();
+            if (s.includes('500') || s.includes('600') || s.includes('700') || s.includes('750') || s.includes('jumbo')) return 25000;
+            if (s.includes('6 rak') || s.includes('230') || s.includes('280') || s.includes('300') || s.includes('400') || s.includes('sliding') || s.includes('256')) return 15000;
+            return 10000;
+        }
+
+        async function processData() {
+            const text = document.getElementById('input-text').value;
+            if(!text.trim()) return alert("Isi data dulu!");
+
+            showLoading(true);
+
+            // 1. Parse Data
+            const stops = [];
+            const lines = text.split('\n');
+            let currentTask = 'KIRIM';
+            
+            // Regex Parsers
+            const regexName = /(?:Nama:|^\d+\.\s*)(.+?)(?:\(|$)/; 
+            const regexUnit = /(?:Unit:|📦|🧊)\s*(.+)/i;
+            const regexMaps = /maps\.google\.com\/\?q=([-0-9\.]+),([-0-9\.]+)/;
+
+            // Simple parser loop
+            let tempStop = {};
+            let isParsing = false;
+
+            lines.forEach(line => {
+                const l = line.trim();
+                if(l.toUpperCase().includes('PENGIRIMAN')) currentTask = 'ANTAR';
+                if(l.toUpperCase().includes('PENJEMPUTAN')) currentTask = 'JEMPUT';
+
+                const nameMatch = l.match(regexName);
+                if (nameMatch && (l.match(/^\d+\./) || l.includes('Nama:'))) {
+                    if (isParsing && tempStop.name) stops.push(tempStop);
+                    isParsing = true;
+                    tempStop = { name: nameMatch[1].trim(), task: currentTask, items: [] };
+                }
+
+                const unitMatch = l.match(regexUnit);
+                if (unitMatch && isParsing) {
+                    if(l.match(/^\d+\./)) {
+                         const itemClean = l.replace(/^\d+\.\s*/, '').trim();
+                         const finalItem = itemClean.split('(')[0].trim();
+                         tempStop.items.push(finalItem);
+                    } else {
+                        tempStop.items.push(unitMatch[1].trim());
+                    }
+                }
+
+                const mapMatch = l.match(regexMaps);
+                if (mapMatch && isParsing) {
+                    tempStop.lat = parseFloat(mapMatch[1]);
+                    tempStop.lng = parseFloat(mapMatch[2]);
+                }
+            });
+            if (isParsing && tempStop.name) stops.push(tempStop);
+
+            if(stops.length === 0) {
+                showLoading(false);
+                return alert("Gagal membaca data. Pastikan format benar.");
+            }
+
+            // 2. Calculate Route (Simple TSP)
+            let sorted = [];
+            let curr = WAREHOUSE;
+            let pool = [...stops];
+            
+            while(pool.length > 0) {
+                let nearest = 0, minDist = Infinity;
+                pool.forEach((s, i) => {
+                    const d = Math.sqrt((s.lat-curr.lat)**2 + (s.lng-curr.lng)**2);
+                    if(d < minDist) { minDist = d; nearest = i; }
+                });
+                curr = pool[nearest];
+                sorted.push(curr);
+                pool.splice(nearest, 1);
+            }
+
+            // 3. API Call for Distance & Geometry
+            const points = [WAREHOUSE, ...sorted, WAREHOUSE];
+            const coords = points.map(p => `${p.lng},${p.lat}`).join(';');
+            
+            try {
+                const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`);
+                const data = await res.json();
+                
+                if(data.code !== 'Ok') throw new Error("Gagal routing");
+
+                const distKM = Math.ceil((data.routes[0].distance / 1000) * 1.05); // +5% buffer
+                const geojson = data.routes[0].geometry;
+
+                // 4. Render Receipt
+                renderReceipt(sorted, distKM, geojson);
+                
+            } catch (e) {
+                alert("Gagal menghitung rute. Cek koneksi internet.");
+                console.error(e);
+            }
+            
+            showLoading(false);
+        }
+
+        function renderReceipt(stops, dist, geojson) {
+            const node = document.getElementById('receipt-node');
+            node.classList.remove('hidden');
+            
+            // Header Data
+            const now = new Date();
+            document.getElementById('receipt-date').innerText = now.toLocaleDateString('id-ID', {day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'});
+            document.getElementById('receipt-id').innerText = `#KZ-${Math.floor(Math.random()*10000)}`;
+            document.getElementById('receipt-dist-text').innerText = `Total Jarak Tempuh: ${dist} KM`;
+
+            // === MAP INITIALIZATION FIX ===
+            if (!map) {
+                map = L.map('map', { zoomControl: false, attributionControl: false });
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            }
+            
+            // Wajib invalidate size setelah container visible
+            setTimeout(() => {
+                map.invalidateSize();
+                
+                // Map Draw
+                if(routeLayer) map.removeLayer(routeLayer);
+                routeLayer = L.geoJSON(geojson, { style: { color: '#4f46e5', weight: 5 } }).addTo(map);
+                
+                // Markers
+                map.eachLayer(l => { if(l instanceof L.Marker || l instanceof L.CircleMarker) map.removeLayer(l); });
+                
+                const bounds = new L.LatLngBounds();
+                bounds.extend([WAREHOUSE.lat, WAREHOUSE.lng]);
+                L.circleMarker([WAREHOUSE.lat, WAREHOUSE.lng], {radius: 6, color:'black', fillColor:'white', fillOpacity:1}).addTo(map);
+
+                stops.forEach((s, i) => {
+                    L.circleMarker([s.lat, s.lng], {radius: 6, color:'#4f46e5', fillColor:'#4f46e5', fillOpacity:1}).addTo(map);
+                    bounds.extend([s.lat, s.lng]);
+                });
+                map.fitBounds(bounds, {padding:[20,20]});
+            }, 100);
+            // ==============================
+
+            // Items List & Cost Calc
+            const listNode = document.getElementById('receipt-items');
+            listNode.innerHTML = '';
+            
+            let totalLoad = 0;
+            let totalUnitCount = 0;
+
+            stops.forEach((s, i) => {
+                let stopFee = 0;
+                let itemStr = '';
+                
+                if(s.items.length > 0) {
+                    s.items.forEach(item => {
+                        const fee = calculateUnitFee(item);
+                        stopFee += fee;
+                        totalUnitCount++;
+                        itemStr += `<div class="pl-2 text-gray-500">• ${item}</div>`;
+                    });
+                } else {
+                    stopFee = 10000;
+                    totalUnitCount++;
+                    itemStr = `<div class="pl-2 text-gray-500">• Unit Standar</div>`;
+                }
+                totalLoad += stopFee;
+
+                const html = `
+                    <li class="border-b border-dashed border-gray-200 pb-2">
+                        <div class="flex justify-between font-bold">
+                            <span>${i+1}. ${s.name} <span class="font-normal text-[10px] text-gray-400">(${s.task})</span></span>
+                            <span>Rp ${stopFee.toLocaleString('id-ID')}</span>
+                        </div>
+                        ${itemStr}
+                    </li>
+                `;
+                listNode.innerHTML += html;
+            });
+
+            // Financials
+            const payDrive = dist * PRICES.perKM;
+            const payMeal = PRICES.meal;
+            const grandTotal = payDrive + totalLoad + payMeal;
+
+            document.getElementById('txt-km').innerText = dist;
+            document.getElementById('val-drive').innerText = `Rp ${payDrive.toLocaleString('id-ID')}`;
+            
+            document.getElementById('txt-unit').innerText = totalUnitCount;
+            document.getElementById('val-load').innerText = `Rp ${totalLoad.toLocaleString('id-ID')}`;
+            
+            document.getElementById('val-total').innerText = `Rp ${grandTotal.toLocaleString('id-ID')}`;
+
+            document.getElementById('btn-download').classList.remove('hidden');
+            node.scrollIntoView({behavior: 'smooth'});
+        }
+
+        function downloadReceipt() {
+            const node = document.getElementById('receipt-node');
+            const btn = document.getElementById('btn-download');
+            
+            btn.innerText = "📸 Menangkap Layar...";
+            
+            html2canvas(node, {
+                useCORS: true, 
+                scale: 2 
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = `Slip_Gaji_Kenekozo_${Date.now()}.jpg`;
+                link.href = canvas.toDataURL('image/jpeg', 0.9);
+                link.click();
+                
+                btn.innerHTML = `<i data-lucide="check" class="w-5 h-5"></i> Tersimpan!`;
+                setTimeout(() => {
+                    btn.innerHTML = `<i data-lucide="download" class="w-5 h-5"></i> Simpan Gambar Struk`;
+                }, 2000);
+            }).catch(err => {
+                alert("Gagal membuat gambar. Pastikan peta sudah muncul.");
+                console.error(err);
+                btn.innerText = "Gagal :(";
+            });
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        }
+    </script>
+</body>
+</html>
