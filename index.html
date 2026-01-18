@@ -133,7 +133,7 @@
                             <span id="val-drive">Rp 0</span>
                         </div>
                         <div class="flex justify-between text-xs text-gray-600 mb-1">
-                            <span>Ongkos Jasa/Otot (<span id="txt-unit">0</span> titaik):</span>
+                            <span>Ongkos Jasa/Otot (<span id="txt-unit">0</span> titik):</span>
                             <span id="val-load">Rp 0</span>
                         </div>
                         <div class="flex justify-between text-xs text-gray-600 mb-3">
@@ -209,15 +209,33 @@
 
             lines.forEach(line => {
                 const l = line.trim();
-                if(l.toUpperCase().includes('PENGIRIMAN')) currentTask = 'ANTAR';
-                if(l.toUpperCase().includes('PENJEMPUTAN')) currentTask = 'JEMPUT';
-                if(l.toUpperCase().includes('TAGIH') || l.toUpperCase().includes('INVOICE')) currentTask = 'TAGIH';
+                const lUpper = l.toUpperCase();
+                
+                // Deteksi Task berdasarkan Header atau Konten
+                if(lUpper.includes('PENGIRIMAN')) currentTask = 'ANTAR';
+                if(lUpper.includes('PENJEMPUTAN')) currentTask = 'JEMPUT';
+                if(lUpper.includes('TAGIH') || lUpper.includes('INVOICE') || lUpper.includes('PENAGIHAN')) currentTask = 'TAGIH';
 
                 const nameMatch = l.match(regexName);
                 if (nameMatch && (l.match(/^\d+\./) || l.includes('Nama:'))) {
                     if (isParsing && tempStop.name) stops.push(tempStop);
                     isParsing = true;
-                    tempStop = { name: nameMatch[1].trim(), task: currentTask, items: [] };
+                    
+                    // Kalau di baris nama ada kata "Tagih" (misal: "2. Pak Budi (Tagih)"), 
+                    // otomatis anggap ini tugas TAGIH
+                    let thisTask = currentTask;
+                    if (lUpper.includes('TAGIH') || lUpper.includes('INVOICE')) {
+                        thisTask = 'TAGIH';
+                    }
+
+                    tempStop = { name: nameMatch[1].trim(), task: thisTask, items: [] };
+                    
+                    // FITUR BARU: Ambil info dalam kurung sebagai Item/Keterangan otomatis
+                    // Misal: "1. Pak Budi (Tagih Invoice)" -> Item: "Tagih Invoice"
+                    const parenMatch = l.match(/\((.*?)\)/);
+                    if(parenMatch) {
+                        tempStop.items.push(parenMatch[1].trim());
+                    }
                 }
 
                 const unitMatch = l.match(regexUnit);
@@ -294,15 +312,15 @@
             document.getElementById('receipt-id').innerText = `#KZ-${Math.floor(Math.random()*10000)}`;
             document.getElementById('receipt-dist-text').innerText = `Total Jarak Tempuh: ${dist} KM`;
 
-            // === MAP INITIALIZATION FIX ===
+            // === MAP INITIALIZATION FIX & ZOOM ===
             if (!map) {
                 map = L.map('map', { zoomControl: false, attributionControl: false });
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
             }
             
-            // Wajib invalidate size setelah container visible
+            // Tunggu container render, baru gambar peta
             setTimeout(() => {
-                map.invalidateSize();
+                map.invalidateSize(); // FIX: Reset ukuran peta agar tidak blank
                 
                 // Map Draw
                 if(routeLayer) map.removeLayer(routeLayer);
@@ -319,8 +337,10 @@
                     L.circleMarker([s.lat, s.lng], {radius: 6, color:'#4f46e5', fillColor:'#4f46e5', fillOpacity:1}).addTo(map);
                     bounds.extend([s.lat, s.lng]);
                 });
+                
+                // FIX: Zoom agar pas ke rute
                 map.fitBounds(bounds, {padding:[20,20]});
-            }, 100);
+            }, 300); // Delay 300ms cukup aman
             // ==============================
 
             // Items List & Cost Calc
@@ -342,14 +362,12 @@
                         itemStr += `<div class="pl-2 text-gray-500">• ${item}</div>`;
                     });
                 } else {
-                    // Cek nama stop jika mengandung kata kunci tagih
-                    const nameLower = s.name.toLowerCase();
-                    if (nameLower.includes('tagih') || nameLower.includes('invoice') || s.task === 'TAGIH') {
+                    // Fallback jika item kosong tapi Tasknya TAGIH
+                    if (s.task === 'TAGIH') {
                         stopFee = 5000;
                         totalUnitCount++;
                         itemStr = `<div class="pl-2 text-gray-500">• Jasa Penagihan</div>`;
                     } else {
-                        // Fallback standar
                         stopFee = 10000;
                         totalUnitCount++;
                         itemStr = `<div class="pl-2 text-gray-500">• Unit Standar</div>`;
