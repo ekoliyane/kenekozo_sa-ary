@@ -74,7 +74,7 @@
                     </div>
                 </div>
 
-                <textarea id="input-text" class="w-full h-40 p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono mb-4" placeholder="Contoh:&#10;📦 PENGIRIMAN&#10;1. Bu Ani (Freezer 4 Rak)..."></textarea>
+                <textarea id="input-text" class="w-full h-40 p-3 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-mono mb-4" placeholder="Contoh:&#10;📦 PENGIRIMAN&#10;1. Bu Ani (Freezer 4 Rak)...&#10;2. Pak Budi (Tagih Invoice)..."></textarea>
                 
                 <button onclick="processData()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2 transition-all">
                     <i data-lucide="wand-2" class="w-5 h-5"></i> HITUNG & BUAT STRUK
@@ -88,6 +88,7 @@
                     <li><b>Otot Ringan:</b> Rp 10.000 (4 Rak, 100-200L)</li>
                     <li><b>Otot Sedang:</b> Rp 15.000 (6 Rak, 300-400L)</li>
                     <li><b>Otot Berat:</b> Rp 25.000 (500L+)</li>
+                    <li><b>Penagihan (Tanpa Angkut):</b> Rp 5.000 / titik</li>
                     <li><b>Uang Makan:</b> Rp 20.000 (Flat)</li>
                 </ul>
             </div>
@@ -132,7 +133,7 @@
                             <span id="val-drive">Rp 0</span>
                         </div>
                         <div class="flex justify-between text-xs text-gray-600 mb-1">
-                            <span>Ongkos Otot (<span id="txt-unit">0</span> unit):</span>
+                            <span>Ongkos Jasa/Otot (<span id="txt-unit">0</span> titaik):</span>
                             <span id="val-load">Rp 0</span>
                         </div>
                         <div class="flex justify-between text-xs text-gray-600 mb-3">
@@ -177,6 +178,10 @@
         // PARSING
         function calculateUnitFee(name) {
             const s = name.toLowerCase();
+            // Tarif Penagihan / Tanpa Angkut
+            if (s.includes('tagih') || s.includes('invoice') || s.includes('ambil uang') || s.includes('nota')) return 5000;
+            
+            // Tarif Angkut
             if (s.includes('500') || s.includes('600') || s.includes('700') || s.includes('750') || s.includes('jumbo')) return 25000;
             if (s.includes('6 rak') || s.includes('230') || s.includes('280') || s.includes('300') || s.includes('400') || s.includes('sliding') || s.includes('256')) return 15000;
             return 10000;
@@ -206,6 +211,7 @@
                 const l = line.trim();
                 if(l.toUpperCase().includes('PENGIRIMAN')) currentTask = 'ANTAR';
                 if(l.toUpperCase().includes('PENJEMPUTAN')) currentTask = 'JEMPUT';
+                if(l.toUpperCase().includes('TAGIH') || l.toUpperCase().includes('INVOICE')) currentTask = 'TAGIH';
 
                 const nameMatch = l.match(regexName);
                 if (nameMatch && (l.match(/^\d+\./) || l.includes('Nama:'))) {
@@ -336,9 +342,18 @@
                         itemStr += `<div class="pl-2 text-gray-500">• ${item}</div>`;
                     });
                 } else {
-                    stopFee = 10000;
-                    totalUnitCount++;
-                    itemStr = `<div class="pl-2 text-gray-500">• Unit Standar</div>`;
+                    // Cek nama stop jika mengandung kata kunci tagih
+                    const nameLower = s.name.toLowerCase();
+                    if (nameLower.includes('tagih') || nameLower.includes('invoice') || s.task === 'TAGIH') {
+                        stopFee = 5000;
+                        totalUnitCount++;
+                        itemStr = `<div class="pl-2 text-gray-500">• Jasa Penagihan</div>`;
+                    } else {
+                        // Fallback standar
+                        stopFee = 10000;
+                        totalUnitCount++;
+                        itemStr = `<div class="pl-2 text-gray-500">• Unit Standar</div>`;
+                    }
                 }
                 totalLoad += stopFee;
 
